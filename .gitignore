@@ -1,0 +1,4 @@
+.venv/
+.claude/
+media/
+__pycache__/
