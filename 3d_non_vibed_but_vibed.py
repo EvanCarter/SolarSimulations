@@ -217,8 +217,27 @@ class OrbitRotationTransformation(ThreeDScene):
         # Define Rotation Angle (23.5 degrees)
         theta = 23.5 * DEGREES
 
+        EARTH_RADIUS = 0.3
+
         # 1. Setup Camera
         self.set_camera_orientation(phi=75 * DEGREES, theta=10 * DEGREES)
+
+        # Rotation Visualization
+        rotation_tracker = ValueTracker(0)
+
+        rotation_label = Tex("Rotation Amount:", font_size=24).to_corner(UR, buff=1)
+
+        number = DecimalNumber(0, font_size=24).next_to(rotation_label, RIGHT)
+        self.add_fixed_in_frame_mobjects(rotation_label, number)
+
+        def update_number(m):
+            m.set_value(rotation_tracker.get_value() * 180 / PI)
+            # when commented this moves it to z=0, +x, +y (aka in the 3d environment)
+            # rather than just the top right of the frame
+            # seems like a manim bug
+            self.add_fixed_in_frame_mobjects(m)
+
+        number.add_updater(update_number)
 
         # 2. Setup Axes
         axes = ThreeDAxes()
@@ -237,25 +256,27 @@ class OrbitRotationTransformation(ThreeDScene):
         sun = Sphere(radius=0.4).set_color(YELLOW).set_opacity(0.3)
 
         # 4. Create Earth Group (Sphere + Equator)
-        earth_sphere = Sphere(radius=0.3).set_color(BLUE_E).set_opacity(1)
+        earth_sphere = Sphere(radius=EARTH_RADIUS).set_color(BLUE_E).set_opacity(1)
         # Equator: Circle of same radius, red
-        earth_equator = Circle(radius=0.3, color=RED).set_stroke(width=2)
+        earth_equator = Circle(radius=EARTH_RADIUS, color=RED).set_stroke(width=2)
 
         # Add a reference line ("stick") to visualize rotation
         # Starts at center, points out to radius + bit more
-        stick = Line(start=ORIGIN, end=RIGHT * 0.5, color=YELLOW).set_stroke(width=4)
+        stick = Line(
+            start=np.array([0, -EARTH_RADIUS, 0]),
+            end=np.array([0, -EARTH_RADIUS - 0.7, 0]),
+            color=YELLOW,
+        ).set_stroke(width=4)
 
         self.earth_group = Group(earth_sphere, earth_equator, stick)
 
         # Pre-rotate the Earth group by -theta so that it effectively "starts" tilted relative to the orbit's future frame
-        # But wait, the plan said: rotate by -theta so that AFTER the matrix application (which rotates by +theta equivalent), it becomes flat.
-        # Let's orient it.
-        # Initial state: Earth is at Origin (implicitly before move).
-        # We want to rotate it such that its "local equator" is tilted.
-        self.earth_group.rotate(-theta, axis=RIGHT)
+        # We rotate about ORIGIN to keep the sphere at (0,0,0) so we can shift it cleanly later
+        self.earth_group.rotate(-theta, axis=RIGHT, about_point=ORIGIN)
 
         # Position at (0, radius, 0)
-        self.earth_group.move_to(np.array([0, radius, 0]))
+        # Use shift instead of move_to because move_to centers the bounding box (which is offset due to the stick)
+        self.earth_group.shift(np.array([0, radius, 0]))
 
         # 5. Define Rotation Matrix
         # Rotation around X-axis (fixing typo in comment: matrix is for X-rot, comment said Y/X mixed)
@@ -286,32 +307,6 @@ class OrbitRotationTransformation(ThreeDScene):
 
         self.wait(1)
 
-        # 7. Rotation Visualization
-
-        # Setup ValueTracker and Label
-        rotation_tracker = ValueTracker(0)
-
-        angle_label = (
-            Text("Rotation Angle: ", font_size=24)
-            .to_corner(UL)
-            .shift(DOWN * 0.5 + RIGHT * 0.5)
-        )
-        angle_val = DecimalNumber(
-            0, num_decimal_places=1, unit="^\\circ", font_size=24
-        ).next_to(angle_label, RIGHT)
-
-        # Use add_fixed_in_frame_mobjects ensures they stay 2D on top of 3D scene
-        self.add_fixed_in_frame_mobjects(angle_label)
-        self.add_fixed_in_frame_mobjects(angle_val)
-
-        # Updater for the decimal number
-        def update_angle_val(mob):
-            # Convert radians to degrees
-            val = rotation_tracker.get_value() * 180 / PI
-            mob.set_value(val)
-
-        angle_val.add_updater(update_angle_val)
-
         # Animate Rotation
         # Since the Earth group was transformed, its local Z-axis (OUT) should be the axis of rotation if it's now "upright" relative to the new orbit plane?
         # Let's verify: The matrix rotated everything by theta around X.
@@ -320,7 +315,12 @@ class OrbitRotationTransformation(ThreeDScene):
         # If so, it is upright. Rotating around GLOBAL Z (OUT) should work.
 
         self.play(
-            Rotate(self.earth_group, angle=2 * PI, axis=OUT),
+            Rotate(
+                self.earth_group,
+                angle=2 * PI,
+                axis=OUT,
+                about_point=earth_sphere.get_center(),
+            ),
             rotation_tracker.animate.set_value(2 * PI),
             run_time=5,
             rate_func=linear,
