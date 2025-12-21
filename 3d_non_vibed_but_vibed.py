@@ -265,7 +265,7 @@ class OrbitRotationTransformation(ThreeDScene):
         stick = Line(
             start=np.array([0, -EARTH_RADIUS, 0]),
             end=np.array([0, -EARTH_RADIUS - 0.7, 0]),
-            color=YELLOW,
+            color=RED,
         ).set_stroke(width=4)
 
         self.earth_group = Group(earth_sphere, earth_equator, stick)
@@ -277,6 +277,25 @@ class OrbitRotationTransformation(ThreeDScene):
         # Position at (0, radius, 0)
         # Use shift instead of move_to because move_to centers the bounding box (which is offset due to the stick)
         self.earth_group.shift(np.array([0, radius, 0]))
+
+        # Define Solar Arrow
+        self.solar_arrow = Arrow(start=ORIGIN, end=UP, buff=0, color=YELLOW)
+
+        def update_solar_arrow(mob):
+            earth_center = earth_sphere.get_center()
+            sun_center = sun.get_center()
+            vec = sun_center - earth_center
+
+            # FLATTEN THE Z PART SO IT JUST POINTS INWARD RATHER THAN
+            # ANGLED APPROPARITATLY TOWARD SUN
+            vec[2] = 0
+            if np.linalg.norm(vec) > 0.001:
+                unit_vec = normalize(vec)
+                start = earth_center + unit_vec * EARTH_RADIUS
+                end = start + unit_vec * 0.7
+                mob.put_start_and_end_on(start, end)
+
+        self.solar_arrow.add_updater(update_solar_arrow)
 
         # 5. Define Rotation Matrix
         # Rotation around X-axis (fixing typo in comment: matrix is for X-rot, comment said Y/X mixed)
@@ -294,7 +313,7 @@ class OrbitRotationTransformation(ThreeDScene):
         ]
 
         self.play(FadeIn(sun), Create(orbit))
-        self.play(FadeIn(self.earth_group))
+        self.play(FadeIn(self.earth_group), FadeIn(self.solar_arrow))
         self.wait(1)
 
         # 6. Apply Transformation
@@ -307,23 +326,65 @@ class OrbitRotationTransformation(ThreeDScene):
 
         self.wait(1)
 
-        # Animate Rotation
-        # Since the Earth group was transformed, its local Z-axis (OUT) should be the axis of rotation if it's now "upright" relative to the new orbit plane?
-        # Let's verify: The matrix rotated everything by theta around X.
-        # Earth was pre-rotated by -theta around X (Right).
-        # So Earth's net rotation is 0 relative to global frame?
-        # If so, it is upright. Rotating around GLOBAL Z (OUT) should work.
+        # 7. Animate Orbit + Rotation
+        # We need an orbit tracker to drive the position along the ring
+        orbit_tracker = ValueTracker(
+            PI / 2
+        )  # Start at top (matching the initial placement)
+
+        # Convert our list-of-lists matrix to a numpy array for the updater
+        rot_mat_np = np.array(rotation_matrix)
+
+        # Initialize tracking for rotation delta
+        self.earth_group.old_angle = rotation_tracker.get_value()
+
+        def move_earth_on_orbit(mob):
+            # 1. Calculate target position on the original (flat) circle
+            # corresponding to the current orbit_tracker value
+            angle = orbit_tracker.get_value()
+            flat_pos = np.array([radius * np.cos(angle), radius * np.sin(angle), 0])
+
+            # 2. Apply the same tilt transformation to this position
+            # (matrix multiplication)
+            tilted_pos = np.dot(rot_mat_np, flat_pos)
+
+            # 3. Move the group to this new position
+            # We want the earth_sphere's center to be at 'tilted_pos'.
+            # Since 'mob' is the Group (Earth+Stick), we shift the whole group
+            # by the difference between where the sphere IS and where it SHOULD BE.
+            current_center = earth_sphere.get_center()
+            shift_vec = tilted_pos - current_center
+            mob.shift(shift_vec)
+
+        def spin_earth(mob):
+            # Calculate how much to rotate in this frame
+            current_val = rotation_tracker.get_value()
+            old_val = mob.old_angle
+            delta = current_val - old_val
+            mob.old_angle = current_val
+
+            # Rotate around the earth sphere's center (axis=OUT is global Z)
+            # Since the sphere moves, we must get its center every frame
+            mob.rotate(delta, axis=OUT, about_point=earth_sphere.get_center())
+
+        # Add updaters
+        self.earth_group.add_updater(move_earth_on_orbit)
+        self.earth_group.add_updater(spin_earth)
 
         self.play(
-            Rotate(
-                self.earth_group,
-                angle=2 * PI,
-                axis=OUT,
-                about_point=earth_sphere.get_center(),
-            ),
-            rotation_tracker.animate.set_value(2 * PI),
+            orbit_tracker.animate.increment_value(
+                2 * PI / 24
+            ),  # 1/24th of an orbit (approx 15 degrees)
+            rotation_tracker.animate.increment_value(2 * PI),  # One full rotation
             run_time=5,
             rate_func=linear,
         )
 
+        self.earth_group.remove_updater(move_earth_on_orbit)
+        self.earth_group.remove_updater(spin_earth)
+
         self.wait(2)
+
+        self.move_camera(phi=0, theta=0, run_time=4)
+        wait(2)
+        self.move_camera(phi=75 * DEGREES, theta=10 * DEGREES, run_time=4)
