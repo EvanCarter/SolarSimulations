@@ -6,11 +6,40 @@ from manim import *
 EARTH_RADIUS = 0.3
 SUN_RADIUS = 0.5
 SOLAR_SYSTEM_RADIUS = 3.0
-ORBIT_DURATION = 30.0
+ORBIT_DURATION = 35.0
 ROTATION_DURATION = 5.0
 POINTER_LENGTH = 0.7
-TARGET_SPIN_RADIANS = 432 * DEGREES
-AXIAL_TILT = 20.5 * DEGREES
+
+# SIDEREIAL NO TILT CALCULATIONS
+
+# 3. Solar Day
+# Earth has to rotate extra to point back at the sun
+# We calculate the time t where: w_rot * t - w_orb * t = 2 * PI
+w_rot = (2 * PI) / ROTATION_DURATION  # angular velocity of spin
+w_orb = (2 * PI) / ORBIT_DURATION  # angular velocity of orbit
+
+# t = 2PI / (w_rot - w_orb)
+SOLAR_DAY_DURATION_SIDEREAL = (2 * PI) / (w_rot - w_orb)
+
+# Total rotation angle needed = w_rot * t
+SOLAR_DAY_ANGLE_SIDEREAL = w_rot * SOLAR_DAY_DURATION_SIDEREAL
+
+
+# 420 for the stationary one
+
+#  WITH A TILT OF 70
+# AT A START AT 150 a 378.82 DEGREES GIVES US ONE SOLAR DAY
+#  AT A START AT 60 a 468.29 DEGREES GIVES US ONE SOLAR DAY
+
+AXIAL_TILT = 70 * DEGREES
+# START_ORBIT_ANGLE = 150 * DEGREES
+# TARGET_SPIN_RADIANS = 378.82 * DEGREES
+START_ORBIT_ANGLE = 60 * DEGREES
+TARGET_SPIN_RADIANS = 468.29 * DEGREES
+
+# AXIAL_TILT = 23.5 * DEGREES
+# START_ORBIT_ANGLE = 60 * DEGREES
+# TARGET_SPIN_RADIANS = 420 * DEGREES
 
 
 class SiderealVsSolarNoTilt(ThreeDScene):
@@ -24,7 +53,7 @@ class SiderealVsSolarNoTilt(ThreeDScene):
         self.POINTER_LENGTH = POINTER_LENGTH
 
         # Camera Setup for 3D
-        self.set_camera_orientation(phi=65 * DEGREES, theta=-90 * DEGREES)
+        self.set_camera_orientation(phi=55 * DEGREES, theta=3 * DEGREES)
 
         # self.sun = Circle(radius=1).set_color(YELLOW).set_opacity(0.3)
         # turn sun into sphere
@@ -206,34 +235,83 @@ class SiderealVsSolarNoTilt(ThreeDScene):
         # Shows that 360 rotation doesn't arrive back at pointing to sun
         run_day_cycle(target_angle=2 * PI * self.NUM_SPINS, show_solar_arrow=True)
 
-        # 3. Solar Day
-        # Earth has to rotate extra to point back at the sun
-        # We calculate the time t where: w_rot * t - w_orb * t = 2 * PI
-        w_rot = (2 * PI) / self.ROTATION_DURATION  # angular velocity of spin
-        w_orb = (2 * PI) / self.ORBIT_DURATION  # angular velocity of orbit
-
-        # t = 2PI / (w_rot - w_orb)
-        solar_day_duration = (2 * PI) / (w_rot - w_orb)
-
-        # Total rotation angle needed = w_rot * t
-        solar_day_angle = w_rot * solar_day_duration
-
         run_day_cycle(
-            target_angle=solar_day_angle,
-            run_time=solar_day_duration,
+            target_angle=SOLAR_DAY_ANGLE_SIDEREAL,
+            run_time=SOLAR_DAY_DURATION_SIDEREAL,
             show_solar_arrow=True,
         )
 
 
 #  now do the scene with the arrow pointing the the sun
 class OrbitRotationTransformation(ThreeDScene):
+    def get_meridian_aligned_to_sun(self, earth_sphere, earth_axis, sun):
+        # 1. Get current orientation vectors
+        # Vector pointing from Earth center to North Pole
+        curr_earth_axis_vec = earth_axis.get_end() - earth_axis.get_start()
+        n_axis = normalize(curr_earth_axis_vec)
+
+        # Vector pointing from Earth center to Sun
+        vec_to_sun = sun.get_center() - earth_sphere.get_center()
+
+        # 2. Project vec_to_sun onto the plane perpendicular to the axis
+        # proj = v - (v . n) * n
+        proj_to_sun = vec_to_sun - np.dot(vec_to_sun, n_axis) * n_axis
+
+        # Normalize to get the "forward" direction on the Earth's equator plane
+        n_forward = normalize(proj_to_sun)
+
+        # 3. Calculate "Right" vector (East direction from local perspective)
+        # Right hand rule: forward x axis ? No, usually we want a right-handed basis.
+        # If Z is axis, X is forward, then Y is Z x X ... wait.
+        # Let's just define a basis matrix where:
+        # X' (mapped from [1,0,0]) -> n_forward (Points to Sun in equatorial plane)
+        # Y' (mapped from [0,1,0]) -> n_axis (Points North)
+        # Z' (mapped from [0,0,1]) -> n_right (Points East-ish)
+        n_right = np.cross(n_forward, n_axis)
+
+        # Create the transformation matrix
+        # M = [col1, col2, col3]
+        basis_matrix = np.array([n_forward, n_axis, n_right]).T
+
+        # 4. Create Meridian
+        # A semi-circle going from South Pole to North Pole? Or North to South?
+        # Standard Arc starts at 0 rad (X-axis).
+        # range [-PI/2, PI/2] would be right half of circle (4th and 1st quadrants).
+        # We want it to pass through the "forward" direction.
+        # If we map Standard X to Forward, Standard Y to Axis.
+        # Arc from -PI/2 to PI/2 in standard XY plane goes from (0,-R) to (0,R) through (R,0).
+        # This corresponds perfectly to South Pole -> North Pole through Forward point.
+        meridian = Arc(
+            radius=EARTH_RADIUS,
+            start_angle=-PI / 2,
+            angle=PI,
+            color=YELLOW,
+        ).set_stroke(width=4)
+
+        # Apply the basis transformation
+        # We can use apply_matrix
+        meridian.apply_matrix(basis_matrix)
+
+        # Move to Earth center (apply_matrix rotates around origin, assuming arc was created at origin)
+        meridian.shift(earth_sphere.get_center())
+
+        return meridian
+
     def construct(self):
+
+        self.camera_phi_angle = 55 * DEGREES
+        self.camera_theta_angle = 3 * DEGREES
+        # CONFIGURATION
+        FLAT_PLANE_ORBIT = True  # True: Earth tilted on flat orbit. False: Entire coordinate system tilted.
+        INCLUDE_POINTING_LINE = True
+
         # Define Rotation Angle
         theta = AXIAL_TILT
-        START_ORBIT_ANGLE = 60 * DEGREES
 
         # 1. Setup Camera
-        self.set_camera_orientation(phi=70 * DEGREES, theta=3 * DEGREES)
+        self.set_camera_orientation(
+            phi=self.camera_phi_angle, theta=self.camera_theta_angle
+        )
 
         # Rotation Visualization
         rotation_tracker = ValueTracker(0)
@@ -259,9 +337,7 @@ class OrbitRotationTransformation(ThreeDScene):
         )
         self.add(axes, labels)
 
-        # 3. Create Orbit on X-Z Plane
-        # Initial orbit: flat on the ground (X-Z plane)
-        # We start with a circle in X-Y plane and rotate it to X-Z plane
+        # 3. Create Orbit
         orbit = Circle(radius=SOLAR_SYSTEM_RADIUS, color=BLUE)
 
         # create sun
@@ -272,29 +348,35 @@ class OrbitRotationTransformation(ThreeDScene):
         # Equator: Circle of same radius, red
         earth_equator = Circle(radius=EARTH_RADIUS, color=RED).set_stroke(width=2)
 
-        # Add a reference line ("stick") to visualize rotation
         EARTH_START_X = SOLAR_SYSTEM_RADIUS * np.cos(START_ORBIT_ANGLE)
         EARTH_START_Y = SOLAR_SYSTEM_RADIUS * np.sin(START_ORBIT_ANGLE)
 
-        stick = Line(
-            start=np.array(
-                [
-                    -EARTH_RADIUS * np.cos(START_ORBIT_ANGLE),
-                    -EARTH_RADIUS * np.sin(START_ORBIT_ANGLE),
-                    0,
-                ]
-            ),
-            end=np.array(
-                [
-                    -(EARTH_RADIUS + 0.7) * np.cos(START_ORBIT_ANGLE),
-                    -(EARTH_RADIUS + 0.7) * np.sin(START_ORBIT_ANGLE),
-                    0,
-                ]
-            ),
-            color=RED,
-        ).set_stroke(width=4)
+        earth_axis = Line(
+            start=np.array([0, 0, -EARTH_RADIUS * 1.4]),
+            end=np.array([0, 0, EARTH_RADIUS * 1.4]),
+            color=GREEN,
+        ).set_stroke(width=2)
 
-        self.earth_group = Group(earth_sphere, earth_equator, stick)
+        # stick = Line(
+        #     start=np.array(
+        #         [
+        #             -EARTH_RADIUS * np.cos(START_ORBIT_ANGLE),
+        #             -EARTH_RADIUS * np.sin(START_ORBIT_ANGLE),
+        #             0,
+        #         ]
+        #     ),
+        #     end=np.array(
+        #         [
+        #             -(EARTH_RADIUS + 0.4) * np.cos(START_ORBIT_ANGLE),
+        #             -(EARTH_RADIUS + 0.4) * np.sin(START_ORBIT_ANGLE),
+        #             0,
+        #         ]
+        #     ),
+        #     color=RED,
+        # ).set_stroke(width=4)
+
+        # self.earth_group = Group(earth_sphere, earth_equator, earth_axis, stick)
+        self.earth_group = Group(earth_sphere, earth_equator, earth_axis)
 
         # Position at (0, radius, 0)
         # Use shift instead of move_to because move_to centers the bounding box (which is offset due to the stick)
@@ -334,24 +416,55 @@ class OrbitRotationTransformation(ThreeDScene):
             [0, np.sin(theta), np.cos(theta)],
         ]
 
-        self.play(FadeIn(sun), Create(orbit))
+        project_to_xy_matrix = [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+        ]
 
+        self.play(FadeIn(sun), Create(orbit))
         self.play(FadeIn(self.earth_group), FadeIn(self.solar_arrow))
         self.wait(1)
 
+        # Rotate around RIGHT (X-axis) to tilt the poles
         self.play(
             self.earth_group.animate.rotate(
-                -theta, axis=RIGHT, about_point=earth_sphere.get_center()
+                -theta,
+                axis=RIGHT,
+                about_point=earth_sphere.get_center(),
             ),
             run_time=3,
         )
 
+        # get rid of the z compontent of stick after we do a rotation on the axis
+
+        # if FLAT_PLANE_ORBIT:
+        #     self.play(ApplyMatrix(project_to_xy_matrix, stick), run_time=2)
+
+        # ---------------------------------------------------------
+        # Insert Meridian Line Logic Here (After Tilt)
+        # ---------------------------------------------------------
+        meridian = self.get_meridian_aligned_to_sun(earth_sphere, earth_axis, sun)
+        # fade in the meridian
+        self.play(FadeIn(meridian), run_time=2)
+        self.earth_group.add(meridian)
+        # ---------------------------------------------------------
+
         # 6. Apply Transformation
         # ApplyMatrix applies the linear transformation to the points of the Mobjects
-        self.play(
-            ApplyMatrix(rotation_matrix, orbit),
-            ApplyMatrix(rotation_matrix, self.earth_group),
-            run_time=3,
+        # Apply transformation
+
+        if not FLAT_PLANE_ORBIT:
+            self.play(
+                ApplyMatrix(rotation_matrix, orbit),
+                ApplyMatrix(rotation_matrix, self.earth_group),
+                run_time=3,
+            )
+
+        self.move_camera(phi=0, theta=0, run_time=1)
+        self.wait(1)
+        self.move_camera(
+            phi=self.camera_phi_angle, theta=self.camera_theta_angle, run_time=1
         )
 
         self.wait(1)
@@ -378,16 +491,14 @@ class OrbitRotationTransformation(ThreeDScene):
                 ]
             )
 
-            # 2. Apply the same tilt transformation to this position
-            # (matrix multiplication)
-            tilted_pos = np.dot(rot_mat_np, flat_pos)
-
-            # 3. Move the group to this new position
-            # We want the earth_sphere's center to be at 'tilted_pos'.
-            # Since 'mob' is the Group (Earth+Stick), we shift the whole group
-            # by the difference between where the sphere IS and where it SHOULD BE.
             current_center = earth_sphere.get_center()
-            shift_vec = tilted_pos - current_center
+            shift_vec = 0
+            if FLAT_PLANE_ORBIT:
+                shift_vec = flat_pos - current_center
+            else:
+                tilted_pos = np.dot(rot_mat_np, flat_pos)
+                shift_vec = tilted_pos - current_center
+
             mob.shift(shift_vec)
 
         def spin_earth(mob):
@@ -399,20 +510,25 @@ class OrbitRotationTransformation(ThreeDScene):
 
             # Rotate around the earth sphere's center (axis=OUT is global Z)
             # Since the sphere moves, we must get its center every frame
-            mob.rotate(delta, axis=OUT, about_point=earth_sphere.get_center())
+            if FLAT_PLANE_ORBIT:
+                # Spin around the tilted local axis
+                axis = np.array([0, np.sin(theta), np.cos(theta)])
+            else:
+                axis = OUT
+
+            mob.rotate(delta, axis=axis, about_point=earth_sphere.get_center())
 
         # Add updaters
         self.earth_group.add_updater(move_earth_on_orbit)
         self.earth_group.add_updater(spin_earth)
 
-        run_time = 5.0
         # Calculate angle based on the fraction of the full orbit duration
-        orbit_increment = (run_time / ORBIT_DURATION) * (2 * PI)
+        orbit_increment = (SOLAR_DAY_DURATION_SIDEREAL / ORBIT_DURATION) * (TAU)
 
         self.play(
             orbit_tracker.animate.increment_value(orbit_increment),
             rotation_tracker.animate.increment_value(TARGET_SPIN_RADIANS),
-            run_time=run_time,
+            run_time=SOLAR_DAY_DURATION_SIDEREAL,
             rate_func=linear,
         )
 
@@ -421,6 +537,8 @@ class OrbitRotationTransformation(ThreeDScene):
 
         self.wait(2)
 
-        self.move_camera(phi=0, theta=0, run_time=4)
-        self.wait(2)
-        self.move_camera(phi=75 * DEGREES, theta=10 * DEGREES, run_time=4)
+        self.move_camera(phi=0, theta=0, run_time=1)
+        self.wait(1)
+        # self.move_camera(
+        #     phi=self.camera_phi_angle, theta=self.camera_theta_angle, run_time=1
+        # )
