@@ -119,13 +119,18 @@ def get_alignment_error(tilt_deg, start_orbit_deg, spin_deg):
     return angle_error_deg, direction, orbit_delta_deg
 
 
-def get_error_for_duration(duration, tilt, start_orbit_deg):
-    # Calculate angles based on duration
-    # Spin Rate: 360 deg / ROTATION_DURATION
-    # Orbit Rate: 360 deg / ORBIT_DURATION
+# Constants matching 3d_non_vibed_but_vibed.py
+ROTATION_DURATION = 5.0
+ORBIT_DURATION = 35.0
 
-    spin_rate = 360.0 / 5.0  # ROTATION_DURATION
-    orbit_rate = 360.0 / 35.0  # ORBIT_DURATION
+
+def get_error_for_duration(duration, tilt, start_orbit_deg):
+    # Calculate angles based on CONSTANT Angular Velocity
+    # The physics constraint: The Earth spins at a fixed rate defined by ROTATION_DURATION.
+    # We are only finding the 't' (duration) that satisfies the alignment.
+
+    spin_rate = 360.0 / ROTATION_DURATION
+    orbit_rate = 360.0 / ORBIT_DURATION
 
     current_spin = spin_rate * duration
     # Orbit delta is how much we moved along the orbit in this time

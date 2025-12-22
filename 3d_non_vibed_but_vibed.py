@@ -10,19 +10,7 @@ ORBIT_DURATION = 35.0
 ROTATION_DURATION = 5.0
 POINTER_LENGTH = 0.7
 
-# SIDEREIAL NO TILT CALCULATIONS
-
-# 3. Solar Day
-# Earth has to rotate extra to point back at the sun
-# We calculate the time t where: w_rot * t - w_orb * t = 2 * PI
-w_rot = (2 * PI) / ROTATION_DURATION  # angular velocity of spin
-w_orb = (2 * PI) / ORBIT_DURATION  # angular velocity of orbit
-
-# t = 2PI / (w_rot - w_orb)
-SOLAR_DAY_DURATION_SIDEREAL = (2 * PI) / (w_rot - w_orb)
-
-# Total rotation angle needed = w_rot * t
-SOLAR_DAY_ANGLE_SIDEREAL = w_rot * SOLAR_DAY_DURATION_SIDEREAL
+# SIDEREAL LOGIC REMOVED
 
 
 # 420 for the stationary one
@@ -34,12 +22,30 @@ SOLAR_DAY_ANGLE_SIDEREAL = w_rot * SOLAR_DAY_DURATION_SIDEREAL
 AXIAL_TILT = 70 * DEGREES
 # START_ORBIT_ANGLE = 150 * DEGREES
 # TARGET_SPIN_RADIANS = 378.82 * DEGREES
-START_ORBIT_ANGLE = 60 * DEGREES
-TARGET_SPIN_RADIANS = 468.29 * DEGREES
+from verify_solar_day import find_optimal_duration
 
-# AXIAL_TILT = 23.5 * DEGREES
-# START_ORBIT_ANGLE = 60 * DEGREES
-# TARGET_SPIN_RADIANS = 420 * DEGREES
+AXIAL_TILT_DEG = 70
+START_ORBIT_ANGLE_DEG = 150
+
+AXIAL_TILT = AXIAL_TILT_DEG * DEGREES
+START_ORBIT_ANGLE = START_ORBIT_ANGLE_DEG * DEGREES
+
+# Calculate dynamically using the helper from verify_solar_day.py
+try:
+    SOLAR_DAY_DURATION, _ = find_optimal_duration(AXIAL_TILT_DEG, START_ORBIT_ANGLE_DEG)
+    print(f"Calculated Optimal Duration: {SOLAR_DAY_DURATION}")
+except Exception as e:
+    print(f"Error calculating duration: {e}")
+    SOLAR_DAY_DURATION = 5.0  # Fallback
+
+# Derived Physics Constants
+w_rot = (2 * PI) / ROTATION_DURATION
+w_orb = (2 * PI) / ORBIT_DURATION
+
+# Instead of hardcoding angles, we let the time drive the result
+TARGET_SPIN_RADIANS = w_rot * SOLAR_DAY_DURATION
+# TARGET_ORBIT_INCREMENT = w_orb * SOLAR_DAY_DURATION
+ANIMATION_RUN_TIME = SOLAR_DAY_DURATION
 
 
 class SiderealVsSolarNoTilt(ThreeDScene):
@@ -302,7 +308,7 @@ class OrbitRotationTransformation(ThreeDScene):
         self.camera_phi_angle = 55 * DEGREES
         self.camera_theta_angle = 3 * DEGREES
         # CONFIGURATION
-        FLAT_PLANE_ORBIT = True  # True: Earth tilted on flat orbit. False: Entire coordinate system tilted.
+        FLAT_PLANE_ORBIT = False  # True: Earth tilted on flat orbit. False: Entire coordinate system tilted.
         INCLUDE_POINTING_LINE = True
 
         # Define Rotation Angle
@@ -522,13 +528,18 @@ class OrbitRotationTransformation(ThreeDScene):
         self.earth_group.add_updater(move_earth_on_orbit)
         self.earth_group.add_updater(spin_earth)
 
-        # Calculate angle based on the fraction of the full orbit duration
-        orbit_increment = (SOLAR_DAY_DURATION_SIDEREAL / ORBIT_DURATION) * (TAU)
+        # Calculate angles based on the physics of the duration
+        # orbit_increment = (SOLAR_DAY_DURATION / ORBIT_DURATION) * (TAU)
+        orbit_increment = (
+            TARGET_ORBIT_INCREMENT
+            if "TARGET_ORBIT_INCREMENT" in globals()
+            else (ANIMATION_RUN_TIME / ORBIT_DURATION) * TAU
+        )
 
         self.play(
             orbit_tracker.animate.increment_value(orbit_increment),
             rotation_tracker.animate.increment_value(TARGET_SPIN_RADIANS),
-            run_time=SOLAR_DAY_DURATION_SIDEREAL,
+            run_time=ANIMATION_RUN_TIME,
             rate_func=linear,
         )
 
