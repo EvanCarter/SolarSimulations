@@ -234,14 +234,18 @@ class SiderealVsSolarNoTilt(ThreeDScene):
 #  now do the scene with the arrow pointing the the sun
 class OrbitRotationTransformation(ThreeDScene):
 
-    def camera_to_origin(self):
-        self.move_camera(phi=0, theta=0, focal_distance=400, run_time=2.5)
-        # self.move_camera(phi=0, theta=0, focal_distance=1000, run_time=1.5)
-        self.wait(0.5)
-        self.move_camera(
-            phi=self.camera_phi_angle, theta=self.camera_theta_angle, run_time=1.8
-        )
-        self.wait(0.5)
+    def camera_to_origin(self, stay_overhead: bool):
+        if stay_overhead:
+            self.move_camera(phi=0, theta=0, focal_distance=400, run_time=2.5)
+            self.wait(0.5)
+
+        else:
+            self.move_camera(phi=0, theta=0, focal_distance=400, run_time=2.5)
+            self.wait(0.5)
+            self.move_camera(
+                phi=self.camera_phi_angle, theta=self.camera_theta_angle, run_time=1.8
+            )
+            self.wait(0.5)
 
     def get_meridian_aligned_to_sun(self, earth_sphere, earth_axis, sun):
         # 1. Get current orientation vectors
@@ -305,6 +309,8 @@ class OrbitRotationTransformation(ThreeDScene):
         orbit_mobject,
         sun_mobject,
         show_earth_angle_rotation: bool,
+        camera_from_above: bool,
+        full_orbit: bool = False,
     ):
         """
         Runs a single orbit scenario.
@@ -335,13 +341,6 @@ class OrbitRotationTransformation(ThreeDScene):
         rotation_tracker = ValueTracker(0)
         rotation_label = Tex("Rotation Amount:", font_size=24).to_corner(UR, buff=1)
         number = DecimalNumber(0, font_size=24).next_to(rotation_label, RIGHT)
-        # We handle these separately for cleanup since they are fixed in frame
-
-        def update_number(m):
-            m.set_value(rotation_tracker.get_value() * 180 / PI)
-            self.add_fixed_in_frame_mobjects(m)
-
-        number.add_updater(update_number)
 
         # Create Earth Group (Sphere + Equator)
         earth_sphere = Sphere(radius=EARTH_RADIUS).set_color(BLUE_E).set_opacity(1)
@@ -362,10 +361,13 @@ class OrbitRotationTransformation(ThreeDScene):
         # Position Earth
         earth_group.shift(np.array([EARTH_START_X, EARTH_START_Y, 0]))
 
-        # Solar Arrow
+        ######
+        # SOLAR ARROW
+        ######
         solar_arrow = Arrow(start=ORIGIN, end=UP, buff=0, color=YELLOW)
         scene_group.add(solar_arrow)
 
+        # have to declare updater for solar arrow immeditatly bc it's instanciation isn't lined up correctly
         def update_solar_arrow(mob):
             earth_center = earth_sphere.get_center()
             sun_center = sun_mobject.get_center()
@@ -376,7 +378,7 @@ class OrbitRotationTransformation(ThreeDScene):
             if np.linalg.norm(vec) > 0.001:
                 unit_vec = normalize(vec)
                 start = earth_center + unit_vec * EARTH_RADIUS
-                end = start + unit_vec * 0.7
+                end = start + unit_vec * 0.4
                 mob.put_start_and_end_on(start, end)
 
         solar_arrow.add_updater(update_solar_arrow)
@@ -429,12 +431,23 @@ class OrbitRotationTransformation(ThreeDScene):
             )
 
         # Camera Move
-        self.camera_to_origin()
+        self.camera_to_origin(camera_from_above)
 
         # Ambient Rotation
-        self.begin_ambient_camera_rotation(rate=-0.01)
+        # self.begin_ambient_camera_rotation(rate=-0.01)
 
         # Orbit + Spin Animation
+
+        ##################
+        #### UPDATERS ####
+        ##################
+
+        def update_number(m):
+            m.set_value(rotation_tracker.get_value() * 180 / PI)
+            self.add_fixed_in_frame_mobjects(m)
+
+        number.add_updater(update_number)
+
         orbit_tracker = ValueTracker(START_ORBIT_ANGLE)
         rot_mat_np = np.array(rotation_matrix)
         earth_group.old_angle = rotation_tracker.get_value()
@@ -466,9 +479,6 @@ class OrbitRotationTransformation(ThreeDScene):
 
             # Axis of rotation
             if is_flat_orbit:
-                # Tilt is local to Earth, but orbit is flat.
-                # Earth was rotated by -theta around RIGHT.
-                # So its axis is [0, sin(theta), cos(theta)]
                 axis = np.array([0, np.sin(theta), np.cos(theta)])
             else:
                 axis = OUT
@@ -478,15 +488,31 @@ class OrbitRotationTransformation(ThreeDScene):
         earth_group.add_updater(move_earth_on_orbit)
         earth_group.add_updater(spin_earth)
 
-        # Calculate increment
-        orbit_increment = (ANIMATION_RUN_TIME / ORBIT_DURATION) * TAU
+        ##################
+        #### END UPDATERS ####
+        ##################
 
-        self.play(
-            orbit_tracker.animate.increment_value(orbit_increment),
-            rotation_tracker.animate.increment_value(TARGET_SPIN_RADIANS),
-            run_time=ANIMATION_RUN_TIME,
-            rate_func=linear,
-        )
+        # Calculate increment
+        if full_orbit:
+            rotation_amount = 1
+            earth_full_rotations = (ORBIT_DURATION / ROTATION_DURATION) - 1
+            self.play(
+                orbit_tracker.animate.increment_value(rotation_amount * TAU),
+                rotation_tracker.animate.increment_value(
+                    rotation_amount * TAU * earth_full_rotations
+                ),
+                run_time=20,
+                rate_func=linear,
+            )
+        else:
+            orbit_increment = (ANIMATION_RUN_TIME / ORBIT_DURATION) * TAU
+            self.play(
+                orbit_tracker.animate.increment_value(orbit_increment),
+                rotation_tracker.animate.increment_value(TARGET_SPIN_RADIANS),
+                # run_time=ANIMATION_RUN_TIME,
+                run_time=15,
+                rate_func=linear,
+            )
 
         # Cleanup Updaters
         self.stop_ambient_camera_rotation()
@@ -495,7 +521,7 @@ class OrbitRotationTransformation(ThreeDScene):
         solar_arrow.remove_updater(update_solar_arrow)
         number.remove_updater(update_number)
 
-        self.camera_to_origin()
+        self.camera_to_origin(camera_from_above)
 
         # FADE OUT
         # Remove fixed elements
@@ -546,10 +572,12 @@ class OrbitRotationTransformation(ThreeDScene):
         # )
 
         self.run_orbit_scenario(
-            axial_tilt_deg=70,
+            axial_tilt_deg=80,
             start_orbit_angle_deg=60,
-            is_flat_orbit=False,
+            is_flat_orbit=True,
             orbit_mobject=orbit,
             sun_mobject=sun,
             show_earth_angle_rotation=False,
+            camera_from_above=False,
+            full_orbit=True,
         )
